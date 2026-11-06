@@ -7,8 +7,10 @@ const GITHUB_USER = 'YehorStar025';      // логін на GitHub
 const REPO = 'svitlo';
 const GROUP = '7.1';
 const PLACE = 'Оболонь';
-const WARN_MIN = 20;                     // за скільки хвилин попереджати
-const NOTIFY_ON_RETURN = true;           // сповіщення, коли за графіком мають дати світло
+const WARN_MIN = 20;                     // за скільки хвилин попереджати про відключення
+const RETURN_WARN_MIN = 30;              // за скільки хвилин попереджати, що дадуть світло (0 = вимкнути)
+const NOTIFY_ON_RETURN = true;           // сповіщення в момент, коли за графіком мають дати світло
+const AUTO_UPDATE = true;                // скрипт сам підтягує нову версію з GitHub
 // ========================
 
 const URL = `https://raw.githubusercontent.com/${GITHUB_USER}/${REPO}/main/data/${GROUP}.json`;
@@ -256,7 +258,19 @@ async function scheduleNotifications(a) {
         n.setTriggerDate(at);
         await n.schedule();
       }
-      if (NOTIFY_ON_RETURN && s.v === 1 && prev.v === 0 && s.start.getTime() > now) {
+      if (RETURN_WARN_MIN > 0 && s.v === 1 && prev.v !== 1) {
+        const at = new Date(s.start.getTime() - RETURN_WARN_MIN * 60000);
+        if (at.getTime() > now) {
+          const n = new Notification();
+          n.identifier = `svitlo-soon-${s.start.getTime()}`;
+          n.threadIdentifier = 'svitlo';
+          n.title = `Через ${RETURN_WARN_MIN} хв мають дати світло`;
+          n.body = `За графіком о ${hm(s.start)} · черга ${GROUP}`;
+          n.setTriggerDate(at);
+          await n.schedule();
+        }
+      }
+      if (NOTIFY_ON_RETURN && s.v === 1 && prev.v !== 1 && s.start.getTime() > now) {
         const n = new Notification();
         n.identifier = `svitlo-on-${s.start.getTime()}`;
         n.threadIdentifier = 'svitlo';
@@ -305,7 +319,25 @@ async function showDetails(a, data) {
   await wv.present(true);
 }
 
+// ---------- самооновлення (раз на 6 год) ----------
+async function selfUpdate() {
+  try {
+    const stamp = fm.joinPath(fm.documentsDirectory(), 'svitlo-update-check');
+    const last = fm.fileExists(stamp) ? Number(fm.readString(stamp)) : 0;
+    if (Date.now() - last < 6 * 3600e3) return;
+    fm.writeString(stamp, String(Date.now()));
+    const r = new Request(`https://raw.githubusercontent.com/${GITHUB_USER}/${REPO}/main/${encodeURIComponent('Світло.js')}?t=${Date.now()}`);
+    r.timeoutInterval = 10;
+    const code = await r.loadString();
+    if (code.length < 2000 || !code.startsWith('// Світло — віджет')) return;
+    const own = module.filename;
+    const ownFm = own.includes('iCloud') || own.includes('Mobile Documents') ? FileManager.iCloud() : fm;
+    if (ownFm.readString(own) !== code) ownFm.writeString(own, code);
+  } catch (e) { console.warn('Самооновлення: ' + e); }
+}
+
 // ---------- запуск ----------
+if (AUTO_UPDATE) await selfUpdate();
 const data = await loadData();
 const family = config.widgetFamily || 'medium';
 let widget, shown = false;
